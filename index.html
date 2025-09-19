@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Base64 Gzip ⇄ JSON Viewer (Responsive + Dark Fix)</title>
+  <link rel="icon" href="https://coder.com/favicon-180x180-light.png" type="image/png" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+  <style>
+    /* THEME VARIABLES */
+    :root {
+      color-scheme: light;
+      --app-bg: linear-gradient(135deg, #eef2f7 0%, #f8fafc 100%);
+      --card-header-bg: radial-gradient(1200px 600px at 0% 0%, #1f2937 0%, #111827 50%, #0b1220 100%);
+      --indent-color: rgba(99,102,241,.18);
+      --zebra: rgba(148,163,184,0.08);
+      --copy-hover: rgba(34,197,94,.08);
+      --copy-outline: rgba(34,197,94,.4);
+      --select-bg: rgba(59,130,246,.18);
+      --select-outline: rgba(59,130,246,.6);
+      --search-hit: rgba(250, 204, 21, 0.28);
+      --key: #2563eb;
+      --sep: #6b7280;
+      --str: #10b981;
+      --num: #38bdf8;
+      --bool: #d97706;
+      --nul: #ef4444;
+    }
+    :root[data-bs-theme="dark"] {
+      color-scheme: dark;
+      --app-bg: radial-gradient(800px 600px at 10% 10%, #0f172a 0%, #0b1220 100%);
+      --card-header-bg: radial-gradient(1200px 600px at 0% 0%, #0b1324 0%, #0b1220 60%, #070b14 100%);
+      --indent-color: rgba(99,102,241,.28);
+      --zebra: rgba(148,163,184,0.10);
+      --copy-hover: rgba(34,197,94,.12);
+      --copy-outline: rgba(34,197,94,.45);
+      --select-bg: rgba(59,130,246,.28);
+      --select-outline: rgba(59,130,246,.7);
+      --search-hit: rgba(250,204,21,0.32);
+      --key: #60a5fa;
+      --sep: #94a3b8;
+      --str: #34d399;
+      --num: #7dd3fc;
+      --bool: #f59e0b;
+      --nul: #f87171;
+    }
+
+    /* Light mode */
+:root[data-bs-theme="light"] .btn-outline-theme {
+  --bs-btn-color: #212529;
+  --bs-btn-border-color: #212529;
+  --bs-btn-hover-color: #fff;
+  --bs-btn-hover-bg: #212529;
+  --bs-btn-hover-border-color: #212529;
+}
+
+/* Dark mode */
+:root[data-bs-theme="dark"] .btn-outline-theme {
+  --bs-btn-color: #e5e7eb;
+  --bs-btn-border-color: #e5e7eb;
+  --bs-btn-hover-color: #111827;
+  --bs-btn-hover-bg: #e5e7eb;
+  --bs-btn-hover-border-color: #e5e7eb;
+}
+
+    html, body { height: 100%; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: var(--app-bg);
+      min-height: 100vh;
+    }
+    .app-card {
+      border: 0; border-radius: 1.25rem;
+      box-shadow: 0 10px 35px rgba(16, 24, 40, 0.10);
+      overflow: hidden;
+    }
+    .app-card .card-header {
+      background: var(--card-header-bg);
+      border: 0; color: #fff;
+    }
+
+    .json-tree {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 13.5px; line-height: 1.6;
+      padding: .5rem .75rem;
+      border-radius: .75rem;
+      background: var(--bs-body-bg);
+      border: 1px solid var(--bs-border-color-translucent);
+      max-height: 58vh; overflow: auto;
+      counter-reset: rownum;
+    }
+    /* Mobile-friendly heights */
+    @media (max-width: 576px) {
+      .json-tree { max-height: calc(50vh); }
+      .card .card-header h4 { font-size: 1rem; }
+      .json-tree { font-size: 12.5px; }
+    }
+
+    .json-tree.compact { line-height: 1.3; font-size: 12.5px; }
+    .json-tree.comfortable { line-height: 1.85; }
+    .kv-row, .json-node { position: relative; padding-left: 1.5rem; white-space: pre; }
+    .json-tree.show-lines .kv-row::before, .json-tree.show-lines .json-node > summary::before {
+      counter-increment: rownum;
+      content: counter(rownum);
+      position: absolute; left: .25rem;
+      width: 1.25rem; text-align: right; opacity: .45;
+      font-variant-numeric: tabular-nums;
+    }
+    .json-indent {
+      position: absolute; top: 0; bottom: 0; left: .75rem; width: .5rem;
+      background-image: repeating-linear-gradient(90deg, var(--indent-color) 0 1px, transparent 1px 12px);
+      pointer-events: none;
+    }
+    .json-tree .zebra:nth-child(2n) { background: var(--zebra); border-radius: .25rem; }
+    .json-tree summary { cursor: pointer; list-style: none; padding-left: 1rem; border-radius: .25rem; }
+    .json-tree .twisty { display: inline-block; width: .85rem; text-align: center; margin-right: .25rem; }
+    .json-tree details:not([open]) > summary .twisty::before { content: "▶"; }
+    .json-tree details[open] > summary .twisty::before { content: "▾"; }
+
+    .json-key { color: var(--key); }
+    .json-sep { color: var(--sep); }
+    .json-string { color: var(--str); }
+    .json-number { color: var(--num); }
+    .json-boolean { color: var(--bool); }
+    .json-null { color: var(--nul); }
+    .type-badge { font-size: .65rem; vertical-align: baseline; margin-left: .25rem; }
+
+    .copyable:hover { background: var(--copy-hover); outline: 1px dashed var(--copy-outline); border-radius: .25rem; }
+    .selected { background: var(--select-bg) !important; outline: 1px solid var(--select-outline); border-radius: .25rem; }
+    .search-hit { background: var(--search-hit); border-radius: .25rem; padding: 0 .15rem; }
+
+    .small-note { color: var(--bs-secondary-color); font-size: .875rem; }
+    .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+
+    /* Toolbars become more compact on small screens */
+    .toolbar-flex { gap: .5rem; }
+    @media (max-width: 768px) {
+      .toolbar-flex { gap: .35rem; }
+      .input-group.input-group-sm, .btn-group.btn-group-sm, .form-check.form-switch { margin-top: .25rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="p-3">
+    <div class="row g-4">
+      <!-- Left: Decode -->
+      <div class="col-12 col-xl-6">
+        <div class="card app-card h-100">
+          <div class="card-header py-3 d-flex align-items-center justify-content-between flex-wrap">
+            <div class="d-flex align-items-center gap-3">
+              <h4 class="mb-0">Decode: Base64 Gzip → JSON</h4>
+           
+            </div>
+            <div class="form-check form-switch text-white ms-auto mt-2 mt-sm-0">
+              <input class="form-check-input" type="checkbox" role="switch" id="themeToggle">
+              <label class="form-check-label" for="themeToggle">Dark</label>
+            </div>
+          </div>
+          <div class="card-body d-flex flex-column">
+            <div class="mb-3">
+              <label for="input" class="form-label fw-semibold">Paste Base64 (gzip) or plain JSON</label>
+              <textarea id="input" class="form-control mono" rows="8" placeholder="Paste here..."></textarea>
+              <div class="small-note mt-1">If gzip/base64 fails, we'll try parsing as plain JSON.</div>
+            </div>
+            <div class="d-flex flex-wrap align-items-center toolbar-flex">
+              <button class="btn btn-success btn-sm" id="btnProcess">Process</button>
+              <button class="btn btn-outline-primary btn-sm" id="btnExpand">Expand all</button>
+              <button class="btn btn-outline-secondary btn-sm" id="btnCollapse">Collapse all</button>
+              <button class="btn btn-outline-theme btn-sm" id="btnCopy">Copy JSON</button>
+              <button class="btn btn-outline-warning btn-sm" id="btnDownload">Download JSON</button>
+              <button class="btn btn-outline-danger btn-sm ms-auto" id="btnClear">Clear</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: JSON Viewer Response -->
+      <div class="col-12 col-xl-6">
+        <div class="card app-card h-100">
+          <div class="card-header py-3">
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 toolbar-flex">
+              <h4 class="mb-0">JSON Viewer Response</h4>
+              <div class="d-flex flex-wrap gap-2 align-items-center">
+                <div class="input-group input-group-sm" style="max-width: 260px;">
+                  <span class="input-group-text">Search</span>
+                  <input id="searchBox" type="search" class="form-control" placeholder="key or value..." />
+                  <button class="btn btn-outline-secondary" id="btnClearSearch" title="Clear">×</button>
+                </div>
+                <div class="input-group input-group-sm" style="max-width: 220px;">
+                  <span class="input-group-text">Expand to</span>
+                  <select id="expandLevel" class="form-select">
+                    <option value="0">Level 0</option>
+                    <option value="1" selected>Level 1</option>
+                    <option value="2">Level 2</option>
+                    <option value="3">Level 3</option>
+                    <option value="4">Level 4</option>
+                    <option value="5">Level 5</option>
+                  </select>
+                </div>
+                <div class="btn-group btn-group-sm" role="group" aria-label="Density">
+                  <button class="btn btn-outline-secondary active" id="btnDensityNormal">Normal</button>
+                  <button class="btn btn-outline-secondary" id="btnDensityCompact">Compact</button>
+                  <button class="btn btn-outline-secondary" id="btnDensityComfortable">Comfortable</button>
+                </div>
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="toggleWrap" />
+                  <label class="form-check-label small" for="toggleWrap">Wrap</label>
+                </div>
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="toggleLines" checked />
+                  <label class="form-check-label small" for="toggleLines">Line #</label>
+                </div>
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="toggleTypes" />
+                  <label class="form-check-label small" for="toggleTypes">Show types</label>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="mb-2 d-flex align-items-center gap-2 mono" style="font-size:.85rem;">
+              <span class="text-secondary">Path:</span>
+              <span id="crumbPath" class="text-primary">$</span>
+            </div>
+            <div class="position-relative">
+              <div class="json-indent"></div>
+              <div id="jsonTree" class="json-tree" data-density="normal"></div>
+            </div>
+            <ul class="nav nav-tabs mt-3" id="viewTabs" role="tablist">
+              <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="raw-tab" data-bs-toggle="tab" data-bs-target="#raw-pane" type="button" role="tab">Raw</button>
+              </li>
+            </ul>
+            <div class="tab-content border-start border-end border-bottom rounded-bottom p-3" id="viewTabsContent">
+              <div class="tab-pane fade show active" id="raw-pane" role="tabpanel" aria-labelledby="raw-tab">
+                <pre id="outputRaw" class="json-tree" style="max-height: 30vh;"></pre>
+              </div>
+            </div>
+            <div id="statusLine" class="small-note mt-2">Tip: Click a <strong>key</strong> to copy its <em>JSON path</em>. Click a <strong>value</strong> to copy its <em>value</em>. Alt+click a node to collapse siblings.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Encode section -->
+    <div class="row g-4 mt-1">
+      <div class="col-12">
+        <div class="card app-card h-100">
+          <div class="card-header py-3"><h4 class="mb-0">Encode: JSON → Base64 (gzip)</h4></div>
+          <div class="card-body">
+            <div class="row g-3">
+              <div class="col-12 col-lg-6">
+                <label for="jsonInputEnc" class="form-label fw-semibold">JSON input</label>
+                <textarea id="jsonInputEnc" class="form-control mono" rows="8" placeholder='Paste JSON here or click "Use decoded JSON"'></textarea>
+                <div class="form-text">We will gzip-compress then Base64-encode.</div>
+                <div class="d-flex gap-2 mt-2 flex-wrap">
+                  <button class="btn btn-primary" id="btnUseDecoded">Use decoded JSON</button>
+                  <button class="btn btn-outline-secondary" id="btnMinify">Minify JSON</button>
+                  <button class="btn btn-outline-secondary" id="btnPrettify">Prettify JSON</button>
+                  <button class="btn btn-success ms-auto" id="btnEncode">Encode (gzip+base64)</button>
+                </div>
+              </div>
+              <div class="col-12 col-lg-6">
+                <label for="b64Output" class="form-label fw-semibold">Base64 (gzip) output</label>
+                <textarea id="b64Output" class="form-control mono" rows="8" placeholder="Encoded base64 will appear here..." readonly></textarea>
+                <div class="d-flex gap-2 mt-2 flex-wrap">
+                  <button class="btn btn-outline-theme" id="btnCopyB64">Copy</button>
+                  <button class="btn btn-outline-warning" id="btnDownloadB64">Download .txt</button>
+                  <button class="btn btn-outline-secondary ms-auto" id="btnClearB64">Clear</button>
+                </div>
+              </div>
+            </div>
+            <div id="statusEnc" class="small-note mt-2"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <footer class="text-center py-3 mt-4 border-top small-note">
+    <div class="container">
+      <p class="mb-1">
+        © 2025 <strong>Sandip Limbasiya</strong> · JSON Viewer Tool
+      </p>
+      <p class="mb-0">
+        📧 Contact: 
+        <a href="mailto:smpatellibasiya@example.com" class="link-primary">smpatellibasiya@example.com</a>
+      </p>
+    </div>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // ----- Theme init: system preference + localStorage, toggle persists -----
+    (function initTheme() {
+      const stored = localStorage.getItem('json_viewer_theme');
+      const systemDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const initial = stored ?? (systemDark ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-bs-theme', initial);
+      const toggle = document.getElementById('themeToggle');
+      if (toggle) toggle.checked = (initial === 'dark');
+    })();
+    document.getElementById('themeToggle')?.addEventListener('change', (e) => {
+      const useDark = e.target.checked;
+      document.documentElement.setAttribute('data-bs-theme', useDark ? 'dark' : 'light');
+      localStorage.setItem('json_viewer_theme', useDark ? 'dark' : 'light');
+    });
+
+    const $ = (sel) => document.querySelector(sel);
+    const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+    let currentJson = null;
+    let lastSelectedEl = null;
+    let showTypes = false;
+
+    function base64ToUint8Array(base64) {
+      const binaryString = atob(base64);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+      return bytes;
+    }
+    function uint8ArrayToBase64(u8) {
+      let binary = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < u8.length; i += chunk) {
+        const sub = u8.subarray(i, i + chunk);
+        binary += String.fromCharCode.apply(null, sub);
+      }
+      return btoa(binary);
+    }
+    function tryDecode(input) {
+      try {
+        const bin = base64ToUint8Array(input.trim());
+        const inflated = pako.ungzip(bin);
+        const text = new TextDecoder('utf-8').decode(inflated);
+        return text;
+      } catch (_) { }
+      try {
+        JSON.parse(input);
+        return input;
+      } catch (_) { }
+      throw new Error('Input is neither base64-gzip nor valid JSON.');
+    }
+    function typeOf(v) { if (v === null) return 'null'; if (Array.isArray(v)) return 'array'; return typeof v; }
+    function escapeHtml(s) {
+      return s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');
+    }
+
+    function badgeForType(t) { const map = { string: 'String', number: 'Number', boolean: 'Boolean', null: 'Null' }; return map[t] || ''; }
+
+    function createLeaf(key, value, path, depth) {
+      const t = typeOf(value);
+      const row = document.createElement('div');
+      row.className = 'kv-row zebra copyable';
+      row.dataset.path = path;
+      row.title = 'Click to copy value';
+      const typeBadge = showTypes && ['string','number','boolean','null'].includes(t)
+        ? ` <span class="badge text-bg-secondary type-badge">${badgeForType(t)}</span>`
+        : '';
+      const keyHtml = key !== undefined
+        ? `<span class="json-key copyable" data-path="${path}" title="Click to copy path">"${escapeHtml(key)}"</span><span class="json-sep">: </span>`
+        : '';
+      let valHtml = '';
+      if (t === 'string') valHtml = `<span class="json-string copyable" data-path="${path}">"${escapeHtml(value)}"</span>`;
+      else if (t === 'number') valHtml = `<span class="json-number copyable" data-path="${path}">${value}</span>`;
+      else if (t === 'boolean') valHtml = `<span class="json-boolean copyable" data-path="${path}">${value}</span>`;
+      else if (t === 'null') valHtml = `<span class="json-null copyable" data-path="${path}">null</span>`;
+      else valHtml = `<span class="copyable" data-path="${path}">${escapeHtml(String(value))}</span>`;
+
+      row.style.marginLeft = (depth * 12) + 'px';
+      row.innerHTML = keyHtml + valHtml + typeBadge;
+      return row;
+    }
+
+    function createNode(key, value, path, depth) {
+      const t = typeOf(value);
+      if (t === 'object' || t === 'array') {
+        const isArray = t === 'array';
+        const details = document.createElement('details');
+        details.className = 'json-node zebra';
+        const summary = document.createElement('summary');
+        summary.className = 'copyable';
+        summary.dataset.path = path;
+        summary.title = 'Click to copy path';
+
+        const count = isArray ? value.length : Object.keys(value).length;
+        const label = key !== undefined ? `"${escapeHtml(key)}"` : (isArray ? 'Array' : 'Object');
+        const typeBadge = isArray ? '[]' : '{}';
+
+        summary.innerHTML =
+          `<span class="twisty"></span>` +
+          `<span class="json-key" data-path="${path}">${label}</span> ` +
+          `<span class="json-sep">:</span> ` +
+          `<span class="badge text-bg-light type-badge">${typeBadge} ${count}</span>`;
+        details.appendChild(summary);
+
+        const container = document.createElement('div');
+        container.className = 'ms-2';
+
+        if (isArray) {
+          value.forEach((item, idx) => {
+            const childPath = path + '[' + idx + ']';
+            const child = (typeOf(item) === 'object' || typeOf(item) === 'array')
+              ? createNode(String(idx), item, childPath, depth + 1)
+              : createLeaf(String(idx), item, childPath, depth + 1);
+            container.appendChild(child);
+          });
+        } else {
+          Object.keys(value).forEach((k) => {
+            const v = value[k];
+            const childPath = path + '.' + k.replaceAll('"', '\\"');
+            const child = (typeOf(v) === 'object' || typeOf(v) === 'array')
+              ? createNode(k, v, childPath, depth + 1)
+              : createLeaf(k, v, childPath, depth + 1);
+            container.appendChild(child);
+          });
+        }
+
+        details.appendChild(container);
+        details.style.marginLeft = (depth * 12) + 'px';
+        return details;
+      }
+      return createLeaf(key, value, path, depth);
+    }
+
+    function buildTree(json) {
+      const root = document.createDocumentFragment();
+      const node = createNode(undefined, json, '$', 0);
+      node.open = true;
+      root.appendChild(node);
+      return root;
+    }
+
+    function render(json) {
+      const tree = $('#jsonTree');
+      tree.innerHTML = '';
+      tree.appendChild(buildTree(json));
+      $('#outputRaw').textContent = JSON.stringify(json, null, 2);
+      $('#statusLine').textContent = 'Rendered ' + (Array.isArray(json) ? 'Array' : 'Object') + ' with ' + (Array.isArray(json) ? json.length : Object.keys(json || {}).length) + ' item(s).';
+      applyExpandToLevel();
+      applyDensity(getCurrentDensity());
+      applyWrap($('#toggleWrap').checked);
+      applyLineNumbers($('#toggleLines').checked);
+      $('#crumbPath').textContent = '$';
+      clearSelection();
+    }
+
+    function expandAll() { $$('#jsonTree details').forEach(d => d.open = true); }
+    function collapseAll() { $$('#jsonTree details').forEach((d, idx) => d.open = (idx === 0)); }
+    function copyJson() { if (!currentJson) return; navigator.clipboard.writeText(JSON.stringify(currentJson, null, 2)); }
+    function downloadJson() {
+      if (!currentJson) return;
+      const blob = new Blob([JSON.stringify(currentJson, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'data.json'; a.click();
+      URL.revokeObjectURL(url);
+    }
+    function clearAll() {
+      $('#input').value = ''; $('#jsonTree').innerHTML = '';
+      $('#outputRaw').textContent = ''; $('#statusLine').textContent = '';
+      $('#crumbPath').textContent = '$';
+      currentJson = null; clearSelection();
+    }
+
+    function runProcess() {
+      const input = $('#input').value;
+      try {
+        const text = tryDecode(input);
+        let parsed = null;
+        try { parsed = JSON.parse(text); }
+        catch (e) { throw new Error('Decoded text is not valid JSON: ' + e.message); }
+        currentJson = parsed;
+        render(parsed);
+      } catch (err) {
+        currentJson = null;
+        $('#jsonTree').innerHTML = '';
+        $('#outputRaw').textContent = '❌ ' + err.message;
+        $('#statusLine').textContent = '';
+      }
+    }
+
+    function clearSearchHighlights() { $$('.search-hit').forEach(el => el.classList.remove('search-hit')); }
+    function searchInTree(q) {
+      clearSearchHighlights();
+      if (!q) return;
+      const re = new RegExp(q.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&'), 'i');
+      $$('#jsonTree .kv-row, #jsonTree summary').forEach(el => {
+        if (re.test(el.textContent)) {
+          el.querySelectorAll('span').forEach(sp => {
+            if (re.test(sp.textContent)) sp.classList.add('search-hit');
+          });
+          let p = el.closest('details');
+          while (p) { p.open = true; p = p.parentElement?.closest('details'); }
+        }
+      });
+    }
+
+    function applyExpandToLevel() {
+      const lvl = parseInt($('#expandLevel').value || '1', 10);
+      const all = $$('#jsonTree details');
+      all.forEach(d => d.open = false);
+      let opened = 0;
+      function openToLevel(el, depth) {
+        if (depth <= lvl) {
+          el.open = true; opened++;
+          const children = Array.from(el.querySelectorAll(':scope > div > details'));
+          children.forEach(ch => openToLevel(ch, depth + 1));
+        }
+      }
+      const root = $('#jsonTree details');
+      if (root) openToLevel(root, 0);
+      $('#statusLine').textContent = `Expanded to level ${lvl} (opened ${opened} nodes).`;
+    }
+
+    function getCurrentDensity() { return $('#jsonTree').dataset.density || 'normal'; }
+    function setDensity(d) {
+      $('#jsonTree').dataset.density = d;
+      $('#btnDensityNormal').classList.toggle('active', d === 'normal');
+      $('#btnDensityCompact').classList.toggle('active', d === 'compact');
+      $('#btnDensityComfortable').classList.toggle('active', d === 'comfortable');
+      applyDensity(d);
+    }
+    function applyDensity(d) {
+      const tree = $('#jsonTree');
+      tree.classList.remove('compact', 'comfortable');
+      if (d === 'compact') tree.classList.add('compact');
+      if (d === 'comfortable') tree.classList.add('comfortable');
+    }
+    function applyWrap(on) { $('#jsonTree').style.whiteSpace = on ? 'pre-wrap' : 'pre'; }
+    function applyLineNumbers(on) { $('#jsonTree').classList.toggle('show-lines', on); }
+
+    function setSelection(el) {
+      clearSelection();
+      if (!el) return;
+      el.classList.add('selected');
+      lastSelectedEl = el;
+      const path = el.dataset.path || el.closest('[data-path]')?.dataset.path || '$';
+      $('#crumbPath').textContent = path;
+    }
+    function clearSelection() {
+      if (lastSelectedEl) lastSelectedEl.classList.remove('selected');
+      lastSelectedEl = null;
+    }
+    $('#jsonTree').addEventListener('click', (e) => {
+      const target = e.target;
+      if (!(target instanceof HTMLElement)) return;
+      const host = target.closest('.kv-row, summary');
+      if (host) setSelection(host);
+
+      // Alt+click siblings toggle
+      if (e.altKey) {
+        const details = target.closest('details');
+        if (details && details.parentElement) {
+          const siblings = Array.from(details.parentElement.children).filter(x => x.tagName === 'DETAILS');
+          const shouldOpen = !details.open;
+          siblings.forEach(s => { if (s !== details) s.open = shouldOpen; });
+        }
+      }
+
+      // Copy behavior
+      const isKey = target.classList.contains('json-key');
+      const path = target.dataset.path || target.closest('[data-path]')?.dataset.path;
+      if (!path) return;
+      if (isKey) {
+        navigator.clipboard.writeText(path);
+        $('#statusLine').textContent = `Copied path: ${path}`;
+      } else {
+        const txt = target.textContent || '';
+        navigator.clipboard.writeText(txt);
+        $('#statusLine').textContent = `Copied value: ${txt.slice(0,80)}${txt.length>80?'…':''}`;
+      }
+    });
+
+    // Bind controls
+    $('#btnProcess').addEventListener('click', runProcess);
+    $('#btnExpand').addEventListener('click', expandAll);
+    $('#btnCollapse').addEventListener('click', collapseAll);
+    $('#btnCopy').addEventListener('click', copyJson);
+    $('#btnDownload').addEventListener('click', downloadJson);
+    $('#btnClear').addEventListener('click', clearAll);
+
+    $('#searchBox').addEventListener('input', (e) => {
+      const q = e.target.value.trim();
+      if (!q) clearSearchHighlights(); else searchInTree(q);
+    });
+    $('#btnClearSearch').addEventListener('click', () => { $('#searchBox').value = ''; clearSearchHighlights(); });
+
+    $('#expandLevel').addEventListener('change', applyExpandToLevel);
+    $('#btnDensityNormal').addEventListener('click', () => setDensity('normal'));
+    $('#btnDensityCompact').addEventListener('click', () => setDensity('compact'));
+    $('#btnDensityComfortable').addEventListener('click', () => setDensity('comfortable'));
+    $('#toggleWrap').addEventListener('change', (e) => applyWrap(e.target.checked));
+    $('#toggleLines').addEventListener('change', (e) => applyLineNumbers(e.target.checked));
+    $('#toggleTypes').addEventListener('change', (e) => { showTypes = e.target.checked; if (currentJson) render(currentJson); });
+
+    // Encode helpers
+    function encodeJsonToBase64Gzip(jsonText) {
+      let obj;
+      try { obj = JSON.parse(jsonText); }
+      catch (e) { throw new Error('Invalid JSON: ' + e.message); }
+      const normalized = JSON.stringify(obj);
+      const bytes = new TextEncoder().encode(normalized);
+      const gz = pako.gzip(bytes);
+      return uint8ArrayToBase64(gz);
+    }
+    document.getElementById('btnUseDecoded')?.addEventListener('click', () => {
+      if (!currentJson) { $('#statusEnc').textContent = 'Nothing decoded yet.'; return; }
+      $('#jsonInputEnc').value = JSON.stringify(currentJson, null, 2);
+      $('#statusEnc').textContent = 'Loaded JSON from decoded result.';
+    });
+    document.getElementById('btnMinify')?.addEventListener('click', () => {
+      const txt = $('#jsonInputEnc').value || '';
+      try { $('#jsonInputEnc').value = JSON.stringify(JSON.parse(txt)); $('#statusEnc').textContent = 'Minified.'; }
+      catch (e) { $('#statusEnc').textContent = 'Minify failed: ' + e.message; }
+    });
+    document.getElementById('btnPrettify')?.addEventListener('click', () => {
+      const txt = $('#jsonInputEnc').value || '';
+      try { $('#jsonInputEnc').value = JSON.stringify(JSON.parse(txt), null, 2); $('#statusEnc').textContent = 'Prettified.'; }
+      catch (e) { $('#statusEnc').textContent = 'Prettify failed: ' + e.message; }
+    });
+    document.getElementById('btnEncode')?.addEventListener('click', () => {
+      const txt = $('#jsonInputEnc').value || '';
+      try {
+        const b64 = encodeJsonToBase64Gzip(txt);
+        $('#b64Output').value = b64;
+        $('#statusEnc').textContent = 'Encoded ' + (new Blob([txt]).size) + 'B JSON → ' + (b64.length) + ' chars base64 (gzip).';
+      } catch (e) {
+        $('#b64Output').value = '';
+        $('#statusEnc').textContent = 'Encode failed: ' + e.message;
+      }
+    });
+    document.getElementById('btnCopyB64')?.addEventListener('click', () => {
+      const v = $('#b64Output').value;
+      if (!v) return;
+      navigator.clipboard.writeText(v);
+      $('#statusEnc').textContent = 'Copied base64 to clipboard.';
+    });
+    document.getElementById('btnDownloadB64')?.addEventListener('click', () => {
+      const v = $('#b64Output').value;
+      if (!v) return;
+      const blob = new Blob([v], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'data.base64.txt'; a.click();
+      URL.revokeObjectURL(url);
+    });
+    document.getElementById('btnClearB64')?.addEventListener('click', () => { $('#b64Output').value = ''; $('#statusEnc').textContent = ''; });
+  </script>
+</body>
+</html>
